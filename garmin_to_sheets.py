@@ -53,10 +53,22 @@ HEADERS = [
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 
 def get_garmin_client() -> garminconnect.Garmin:
-    """Authenticate with Garmin Connect using email + password."""
+    """
+    Authenticate with Garmin Connect using email + password.
+    Compatible with garminconnect 0.2.x and 0.3.x.
+
+    0.3.x changed the constructor signature — tokenstore is now the first
+    positional arg. We pass it as None to force a fresh credential login,
+    which is correct for a stateless GitHub Actions runner (no token cache).
+    """
     email    = os.environ["GARMIN_EMAIL"]
     password = os.environ["GARMIN_PASSWORD"]
-    client   = garminconnect.Garmin(email, password)
+    try:
+        # 0.3.x signature: Garmin(tokenstore, email, password, ...)
+        client = garminconnect.Garmin(None, email, password)
+    except TypeError:
+        # 0.2.x fallback: Garmin(email, password)
+        client = garminconnect.Garmin(email, password)
     client.login()
     print("[Garmin] Authenticated successfully.")
     return client
@@ -89,12 +101,28 @@ def fetch_hrv(client: garminconnect.Garmin, date_str: str) -> tuple[str, int | N
     Status is one of: 'Balanced', 'Low', 'Poor', 'Unbalanced', or '' if unavailable.
     """
     try:
-        data   = client.get_hrv_data(date_str)
-        summary = data.get("hrvSummary", {})
-        status  = summary.get("lastNight5MinHigh") or summary.get("status", "")
-        # Prefer the human-readable status string
-        status_str = summary.get("weeklyAvg") and summary.get("status") or summary.get("status", "")
-        overnight  = summary.get("lastNight")  # integer ms, e.g. 62
+        data    = client.get_hrv_data(date_str)
+        # Log raw structure so we can see exactly what Garmin returned
+        print(f"  [HRV] raw keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        summary = data.get("hrvSummary", {}) if isinstance(data, dict) else {}
+        if not summary:
+            # Some firmware versions return a flat structure rather than nested
+            summary = data
+
+        # Status: try multiple known key names across firmware versions
+        status_str = (
+            summary.get("status") or
+            summary.get("hrvStatus") or
+            summary.get("lastNightStatus") or
+            ""
+        )
+        # Overnight avg HRV in ms: try multiple known keys
+        overnight = (
+            summary.get("lastNight") or
+            summary.get("lastNightAvg") or
+            summary.get("hrvLastNight") or
+            None
+        )
         print(f"  [HRV] status={status_str!r}  overnight_avg={overnight}ms")
         return str(status_str) if status_str else "", overnight
     except Exception as e:
@@ -124,11 +152,19 @@ def fetch_rhr(client: garminconnect.Garmin, date_str: str) -> int | None:
     """Returns resting heart rate as an integer, or None."""
     try:
         data = client.get_rhr_day(date_str)
-        # get_rhr_day returns a list of dicts with 'value' and 'calendarDate'
+        # Log raw structure to diagnose key names
+        print(f"  [RHR] raw: {str(data)[:200]}")
         if isinstance(data, list) and data:
-            rhr = data[0].get("value")
+            entry = data[0]
+            rhr = (entry.get("value") or
+                   entry.get("restingHeartRate") or
+                   entry.get("rhr"))
         elif isinstance(data, dict):
-            rhr = data.get("restingHeartRate") or data.get("value")
+            rhr = (data.get("restingHeartRate") or
+                   data.get("value") or
+                   data.get("rhr") or
+                   # Some versions nest under allMetrics
+                   (data.get("allMetrics", {}) or {}).get("metricsMap", {}).get("WELLNESS_RESTING_HEART_RATE", [{}])[0].get("value"))
         else:
             rhr = None
         rhr_int = int(rhr) if rhr else None
@@ -154,7 +190,7 @@ def fetch_body_battery(client: garminconnect.Garmin, date_str: str) -> tuple[int
     [timestamp_ms, value] pairs covering that date.
     """
     try:
-        data = client.get_body_battery([date_str, date_str])
+        data = client.get_body_battery(date_str, date_str)
         if not data:
             print("  [Body Battery] No data returned.")
             return None, None
@@ -259,10 +295,20 @@ def main():
     print(f"Run time: {datetime.datetime.now().isoformat()}")
     print("=" * 60)
 
-    # Yesterday's date (Melbourne is UTC+10/+11, but GitHub Actions runs UTC.
-    # The cron is scheduled for 02:00 AEST = 16:00 UTC previous day,
-    # so 'yesterday' in UTC == 'yesterday' in Melbourne. Safe to use UTC here.)
-    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    # Yesterday's date in Melbourne local time (AEST = UTC+10, AEDT = UTC+11).
+    # GitHub Actions runs UTC, so we must convert explicitly — otherwise at
+    # 02:30 AEST on May 16th, UTC is still May 15th and "yesterday UTC" = May 14th,
+    # which is two days behind the correct Melbourne date of May 15th.
+    # We use the zoneinfo module (stdlib in Python 3.9+) for correct DST handling
+    # so the date is right year-round across the AEST/AEDT boundary.
+    try:
+        from zoneinfo import ZoneInfo
+        melb_tz = ZoneInfo("Australia/Melbourne")
+    except ImportError:
+        # Fallback for older Pythons — fixed +10 offset (close enough at 02:30)
+        melb_tz = datetime.timezone(datetime.timedelta(hours=10))
+    melb_now  = datetime.datetime.now(melb_tz)
+    yesterday = (melb_now.date() - datetime.timedelta(days=1)).isoformat()
     print(f"\nFetching Garmin data for: {yesterday}\n")
 
     # Auth
