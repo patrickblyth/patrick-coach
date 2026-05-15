@@ -1,0 +1,43 @@
+name: Garmin Daily Sync
+
+on:
+  schedule:
+    # 02:30 AEST daily (16:30 UTC) — 30 min after the Strava sync
+    # Running after Strava ensures both tabs populate around the same time
+    - cron: "30 16 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Garmin → Google Sheets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Garmin → Sheets sync
+        env:
+          GARMIN_EMAIL:           ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD:        ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          SPREADSHEET_ID:         ${{ secrets.SPREADSHEET_ID }}
+        run: python garmin_to_sheets.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: garmin-sync-failure-logs
+          path: "*.log"
+          retention-days: 7
