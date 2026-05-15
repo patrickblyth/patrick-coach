@@ -3,7 +3,6 @@ garmin_to_sheets.py — Daily Garmin → Google Sheets sync.
 Fetches yesterday's wellness data and upserts a row in the Daily_Stats tab.
 
 Data pulled:
-  - HRV status + overnight average (from get_hrv_data)
   - Sleep score + duration in hours (from get_sleep_data)
   - Resting heart rate (from get_rhr_day)
   - Body battery at start and end of day (from get_body_battery)
@@ -39,8 +38,6 @@ DAILY_STATS_TAB = "Daily_Stats"
 
 HEADERS = [
     "Date",
-    "HRV_Status",
-    "HRV_Overnight_Avg_ms",
     "Sleep_Score",
     "Sleep_Duration_hrs",
     "Resting_HR",
@@ -93,48 +90,6 @@ def get_daily_stats_sheet(gc: gspread.Client) -> gspread.Worksheet:
 
 # ─── Garmin data fetchers ─────────────────────────────────────────────────────
 
-def fetch_hrv(client: garminconnect.Garmin, date_str: str) -> tuple[str, int | None]:
-    """
-    Returns (hrv_status, hrv_overnight_avg_ms).
-    Status is one of: 'Balanced', 'Low', 'Poor', 'Unbalanced', or '' if unavailable.
-    """
-    # Garmin's HRV API behaviour:
-    # - Returns a dict with "hrvSummary" when data exists
-    # - Returns an empty list [] when no data for that date
-    # - Sleep HRV from the night of date_str is sometimes stored under the
-    #   *following* date (the morning you woke up). So we try date_str first,
-    #   then date_str + 1 day as a fallback.
-    def _try_hrv(date: str):
-        try:
-            data = client.get_hrv_data(date)
-            print(f"  [HRV] raw for {date}: {list(data.keys()) if isinstance(data, dict) else repr(data)[:80]}")
-            if not isinstance(data, dict):
-                return None, None
-            summary = data.get("hrvSummary", {})
-            if not summary:
-                return None, None
-            status_str = (summary.get("status") or summary.get("hrvStatus") or "")
-            overnight  = (summary.get("lastNight") or summary.get("lastNightAvg") or None)
-            return str(status_str) if status_str else "", overnight
-        except Exception as e:
-            print(f"  [HRV] Error for {date}: {e}")
-            return None, None
-
-    try:
-        status_str, overnight = _try_hrv(date_str)
-        if status_str is None:
-            # Try the next calendar day — Garmin sometimes files overnight HRV
-            # under the morning date rather than the night date
-            next_day = (datetime.date.fromisoformat(date_str) + datetime.timedelta(days=1)).isoformat()
-            print(f"  [HRV] No data for {date_str}, trying {next_day}...")
-            status_str, overnight = _try_hrv(next_day)
-        if status_str is None:
-            status_str, overnight = "", None
-        print(f"  [HRV] status={status_str!r}  overnight_avg={overnight}ms")
-        return status_str, overnight
-    except Exception as e:
-        print(f"  [HRV] Unavailable: {e}")
-        return "", None
 
 
 def fetch_sleep(client: garminconnect.Garmin, date_str: str) -> tuple[int | None, float | None]:
@@ -328,7 +283,6 @@ def main():
 
     # Fetch all data (each call is independent; failures don't block others)
     print("\n[Fetching Garmin data]")
-    hrv_status, hrv_avg    = fetch_hrv(garmin, yesterday)
     sleep_score, sleep_hrs = fetch_sleep(garmin, yesterday)
     rhr                    = fetch_rhr(garmin, yesterday)
     bb_start, bb_end       = fetch_body_battery(garmin, yesterday)
@@ -338,8 +292,6 @@ def main():
     # Build row (order must match HEADERS)
     row = [
         yesterday,
-        hrv_status  if hrv_status  else "",
-        hrv_avg     if hrv_avg     else "",
         sleep_score if sleep_score else "",
         sleep_hrs   if sleep_hrs   else "",
         rhr         if rhr         else "",
