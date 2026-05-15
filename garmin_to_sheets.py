@@ -63,12 +63,10 @@ def get_garmin_client() -> garminconnect.Garmin:
     """
     email    = os.environ["GARMIN_EMAIL"]
     password = os.environ["GARMIN_PASSWORD"]
-    try:
-        # 0.3.x signature: Garmin(tokenstore, email, password, ...)
-        client = garminconnect.Garmin(None, email, password)
-    except TypeError:
-        # 0.2.x fallback: Garmin(email, password)
-        client = garminconnect.Garmin(email, password)
+    # 0.3.x signature: Garmin(email, password) — same as 0.2.x on the surface,
+    # but the third positional arg is is_cn (bool), not tokenstore.
+    # Passing None caused "is_cn must be a boolean". Just use keyword args to be safe.
+    client = garminconnect.Garmin(email=email, password=password)
     client.login()
     print("[Garmin] Authenticated successfully.")
     return client
