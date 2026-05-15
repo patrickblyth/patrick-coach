@@ -98,31 +98,40 @@ def fetch_hrv(client: garminconnect.Garmin, date_str: str) -> tuple[str, int | N
     Returns (hrv_status, hrv_overnight_avg_ms).
     Status is one of: 'Balanced', 'Low', 'Poor', 'Unbalanced', or '' if unavailable.
     """
-    try:
-        data    = client.get_hrv_data(date_str)
-        # Log raw structure so we can see exactly what Garmin returned
-        print(f"  [HRV] raw keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
-        summary = data.get("hrvSummary", {}) if isinstance(data, dict) else {}
-        if not summary:
-            # Some firmware versions return a flat structure rather than nested
-            summary = data
+    # Garmin's HRV API behaviour:
+    # - Returns a dict with "hrvSummary" when data exists
+    # - Returns an empty list [] when no data for that date
+    # - Sleep HRV from the night of date_str is sometimes stored under the
+    #   *following* date (the morning you woke up). So we try date_str first,
+    #   then date_str + 1 day as a fallback.
+    def _try_hrv(date: str):
+        try:
+            data = client.get_hrv_data(date)
+            print(f"  [HRV] raw for {date}: {list(data.keys()) if isinstance(data, dict) else repr(data)[:80]}")
+            if not isinstance(data, dict):
+                return None, None
+            summary = data.get("hrvSummary", {})
+            if not summary:
+                return None, None
+            status_str = (summary.get("status") or summary.get("hrvStatus") or "")
+            overnight  = (summary.get("lastNight") or summary.get("lastNightAvg") or None)
+            return str(status_str) if status_str else "", overnight
+        except Exception as e:
+            print(f"  [HRV] Error for {date}: {e}")
+            return None, None
 
-        # Status: try multiple known key names across firmware versions
-        status_str = (
-            summary.get("status") or
-            summary.get("hrvStatus") or
-            summary.get("lastNightStatus") or
-            ""
-        )
-        # Overnight avg HRV in ms: try multiple known keys
-        overnight = (
-            summary.get("lastNight") or
-            summary.get("lastNightAvg") or
-            summary.get("hrvLastNight") or
-            None
-        )
+    try:
+        status_str, overnight = _try_hrv(date_str)
+        if status_str is None:
+            # Try the next calendar day — Garmin sometimes files overnight HRV
+            # under the morning date rather than the night date
+            next_day = (datetime.date.fromisoformat(date_str) + datetime.timedelta(days=1)).isoformat()
+            print(f"  [HRV] No data for {date_str}, trying {next_day}...")
+            status_str, overnight = _try_hrv(next_day)
+        if status_str is None:
+            status_str, overnight = "", None
         print(f"  [HRV] status={status_str!r}  overnight_avg={overnight}ms")
-        return str(status_str) if status_str else "", overnight
+        return status_str, overnight
     except Exception as e:
         print(f"  [HRV] Unavailable: {e}")
         return "", None
