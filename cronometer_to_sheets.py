@@ -32,9 +32,9 @@ import csv
 import json
 import time
 import datetime
-import requests
 import gspread
 from google.oauth2.service_account import Credentials
+from cronometer_mcp import CronometerClient
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -70,125 +70,32 @@ ALL_HEADERS = [
 CRONO_COL_START = 8   # "Calories_In" is index 8
 CRONO_COLS = ALL_HEADERS[CRONO_COL_START:]  # I through O
 
-# ─── Cronometer auth ──────────────────────────────────────────────────────────
-# Cronometer has no public API. We use their mobile REST API which is more
-# stable than the GWT web protocol. This is the same approach used by the
-# cronometer-mcp package.
+# ─── Cronometer client ────────────────────────────────────────────────────────
+# We use CronometerClient from the cronometer-mcp package directly.
+# It handles GWT auth, session cookie persistence, and the export API.
+# Credentials are read from CRONOMETER_USERNAME and CRONOMETER_PASSWORD env vars
+# (note: the package uses USERNAME not EMAIL as the env var name).
 
-CRONO_MOBILE_API = "https://cronometer.com/api/auth/signin"
-CRONO_EXPORT_URL = "https://cronometer.com/export"
-CRONO_GWT_URL    = "https://cronometer.com/cronometer/app"
-GWT_PERMUTATION  = "7B121DC5483BF272B1BC1916DA9FA963"
-GWT_HEADER       = "2D6A926E3729946302DC68073CB0D550"
-
-
-def get_cronometer_session() -> tuple[requests.Session, int]:
+def get_cronometer_client() -> CronometerClient:
     """
-    Authenticate with Cronometer mobile API and return (session, user_id).
-    Falls back to stoken-based GWT auth if mobile API fails.
+    Return an authenticated CronometerClient.
+    The package reads CRONOMETER_USERNAME and CRONOMETER_PASSWORD from env.
+    We set CRONOMETER_USERNAME from CRONOMETER_EMAIL for compatibility.
     """
-    import re
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36",
-        "Content-Type": "application/json",
-    })
-
-    # Step 1: POST credentials to mobile API
-    resp = session.post(CRONO_MOBILE_API, json={
-        "username": os.environ["CRONOMETER_EMAIL"],
-        "password": os.environ["CRONOMETER_PASSWORD"],
-    })
-
-    if resp.status_code == 200:
-        data = resp.json()
-        user_id = data.get("userId") or data.get("id") or data.get("user", {}).get("id")
-        stoken  = data.get("stoken") or data.get("token")
-        if user_id:
-            print(f"  [Cronometer] Mobile API auth successful. User ID: {user_id}")
-            # Set stoken cookie for export requests
-            if stoken:
-                session.cookies.set("stoken", stoken, domain="cronometer.com")
-            return session, int(user_id)
-
-    # Fallback: stoken-based login via form POST
-    print(f"  [Cronometer] Mobile API returned {resp.status_code}, trying stoken login...")
-    session.headers.update({"Content-Type": "application/x-www-form-urlencoded"})
-    resp = session.post("https://cronometer.com/login", data={
-        "username": os.environ["CRONOMETER_EMAIL"],
-        "password": os.environ["CRONOMETER_PASSWORD"],
-    }, allow_redirects=True)
-
-    # Extract stoken from cookies or response
-    stoken = session.cookies.get("stoken")
-    if not stoken:
-        # Try parsing from response
-        match = re.search(r'"stoken"\s*:\s*"([^"]+)"', resp.text)
-        if match:
-            stoken = match.group(1)
-            session.cookies.set("stoken", stoken, domain="cronometer.com")
-
-    if not stoken:
-        raise Exception(
-            "Cronometer auth failed — could not obtain stoken. "
-            "Check CRONOMETER_EMAIL and CRONOMETER_PASSWORD secrets."
-        )
-
-    # Get user ID via GWT authenticate call
-    gwt_payload = (
-        f"7|0|6|https://cronometer.com/cronometer/|{GWT_HEADER}|"
-        f"com.cronometer.shared.rpc.CronometerService|authenticate|"
-        f"com.cronometer.shared.user.AuthTokenType/2065601159|FOOD_DIARY|1|2|3|4|1|5|6|0|"
-    )
-    resp = session.post(CRONO_GWT_URL, data=gwt_payload, headers={
-        "Content-Type": "text/x-gwt-rpc; charset=UTF-8",
-        "X-GWT-Permutation": GWT_PERMUTATION,
-        "X-GWT-Module-Base": "https://cronometer.com/cronometer/",
-    })
-    user_id_match = re.search(r'//OK\["[^"]+",(\d+)', resp.text)
-    if not user_id_match:
-        raise Exception(f"Could not parse user ID: {resp.text[:300]}")
-    user_id = int(user_id_match.group(1))
-    print(f"  [Cronometer] stoken auth successful. User ID: {user_id}")
-    return session, user_id
+    # cronometer-mcp uses CRONOMETER_USERNAME; we store it as CRONOMETER_EMAIL
+    if "CRONOMETER_USERNAME" not in os.environ:
+        os.environ["CRONOMETER_USERNAME"] = os.environ["CRONOMETER_EMAIL"]
+    client = CronometerClient()
+    print("  [Cronometer] Client initialised.")
+    return client
 
 
-def generate_auth_token(session: requests.Session, user_id: int) -> str:
-    """Generate a short-lived export token via GWT RPC."""
-    import re
-    gwt_payload = (
-        f"7|0|7|https://cronometer.com/cronometer/|{GWT_HEADER}|"
-        f"com.cronometer.shared.rpc.CronometerService|generateAuthorizationToken|"
-        f"I|com.cronometer.shared.user.AuthTokenType/2065601159|java.lang.String/2004016611|"
-        f"1|2|3|4|3|5|6|7|{user_id}|0|FOOD_DIARY|"
-    )
-    resp = session.post(CRONO_GWT_URL, data=gwt_payload, headers={
-        "Content-Type": "text/x-gwt-rpc; charset=UTF-8",
-        "X-GWT-Permutation": GWT_PERMUTATION,
-        "X-GWT-Module-Base": "https://cronometer.com/cronometer/",
-    })
-    resp.raise_for_status()
-    token_match = re.search(r'//OK\["([^"]+)"', resp.text)
-    if not token_match:
-        raise Exception(f"Could not parse auth token: {resp.text[:200]}")
-    print(f"  [Cronometer] Got export auth token")
-    return token_match.group(1)
-
-
-def fetch_daily_nutrition_csv(
-    session: requests.Session,
-    token: str,
-    date_str: str
-) -> str:
-    """Download the daily nutrition CSV for a single date."""
-    resp = session.get(CRONO_EXPORT_URL, params={
-        "authToken": token,
-        "report":    "dailySummary",
-        "start":     date_str,
-        "end":       date_str,
-    })
-    resp.raise_for_status()
-    return resp.text
+def fetch_daily_nutrition_csv(client: CronometerClient, date_str: str) -> str:
+    """Download the daily nutrition CSV for a single date via CronometerClient."""
+    from datetime import date as date_type
+    d = date_type.fromisoformat(date_str)
+    csv_text = client.export_raw("daily_summary", d, d)
+    return csv_text
 
 # ─── Nutrition parsing ────────────────────────────────────────────────────────
 
@@ -332,18 +239,11 @@ def main():
     yesterday = (melb_now.date() - datetime.timedelta(days=1)).isoformat()
     print(f"\nFetching Cronometer data for: {yesterday}\n")
 
-    # Cronometer auth
-    print("[Cronometer] Authenticating...")
-    session, user_id = get_cronometer_session()
-    time.sleep(1)  # Brief pause after login
-
-    # Generate export token
-    token = generate_auth_token(session, user_id)
-    time.sleep(1)
-
-    # Fetch and parse daily nutrition
+    # Cronometer client + fetch
+    print("[Cronometer] Initialising client...")
+    client    = get_cronometer_client()
     print(f"\n[Cronometer] Fetching daily nutrition export...")
-    csv_text  = fetch_daily_nutrition_csv(session, token, yesterday)
+    csv_text  = fetch_daily_nutrition_csv(client, yesterday)
     nutrition = parse_nutrition(csv_text, yesterday)
 
     print(f"\n[Nutrition] {nutrition}")
