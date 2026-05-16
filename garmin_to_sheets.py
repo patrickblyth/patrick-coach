@@ -5,7 +5,7 @@ Fetches yesterday's wellness data and upserts a row in the Daily_Stats tab.
 Data pulled:
   - Sleep score + duration in hours (from get_sleep_data)
   - Resting heart rate (from get_rhr_day)
-  - Body battery at start and end of day (from get_body_battery)
+  - Body battery daily high and low (from get_body_battery)
   - Average stress score (from get_stress_data)
   - Weight in kg (from get_body_composition — Garmin scale sync)
 
@@ -41,8 +41,8 @@ HEADERS = [
     "Sleep_Score",
     "Sleep_Duration_hrs",
     "Resting_HR",
-    "Body_Battery_Start",
-    "Body_Battery_End",
+    "Body_Battery_High",
+    "Body_Battery_Low",
     "Stress_Score",
     "Weight_kg",
 ]
@@ -139,15 +139,14 @@ def fetch_rhr(client: garminconnect.Garmin, date_str: str) -> int | None:
 
 def fetch_body_battery(client: garminconnect.Garmin, date_str: str) -> tuple[int | None, int | None]:
     """
-    Returns (battery_start, battery_end) for the day.
+    Returns (battery_high, battery_low) for the day.
 
-    battery_start — first reading after midnight, reflecting how charged you
-                    woke up after sleep.
-    battery_end   — last reading before midnight, reflecting how depleted you
-                    were by end of day. The difference (start - end) is a proxy
-                    for how taxing the day was; Gemini can derive this on the fly.
+    Using max/min across all readings rather than start/end avoids the
+    problem of midnight readings during sleep pulling values artificially
+    low. High/low gives Gemini a cleaner picture of peak recovery vs
+    peak fatigue regardless of when exactly they occurred.
 
-    get_body_battery accepts [start_date, end_date].
+    get_body_battery accepts two separate date string arguments.
     Each entry in the returned list has a 'bodyBatteryValuesArray' of
     [timestamp_ms, value] pairs covering that date.
     """
@@ -165,10 +164,10 @@ def fetch_body_battery(client: garminconnect.Garmin, date_str: str) -> tuple[int
         if not values:
             print("  [Body Battery] All readings were null.")
             return None, None
-        start = int(values[0])
-        end   = int(values[-1])
-        print(f"  [Body Battery] Start={start}  End={end}  Drain={start - end}")
-        return start, end
+        high = int(max(values))
+        low  = int(min(values))
+        print(f"  [Body Battery] High={high}  Low={low}  Range={high - low}")
+        return high, low
     except Exception as e:
         print(f"  [Body Battery] Unavailable: {e}")
         return None, None
@@ -285,7 +284,7 @@ def main():
     print("\n[Fetching Garmin data]")
     sleep_score, sleep_hrs = fetch_sleep(garmin, yesterday)
     rhr                    = fetch_rhr(garmin, yesterday)
-    bb_start, bb_end       = fetch_body_battery(garmin, yesterday)
+    bb_high, bb_low        = fetch_body_battery(garmin, yesterday)
     stress                 = fetch_stress(garmin, yesterday)
     weight                 = fetch_weight(garmin, yesterday)
 
@@ -295,8 +294,8 @@ def main():
         sleep_score if sleep_score else "",
         sleep_hrs   if sleep_hrs   else "",
         rhr         if rhr         else "",
-        bb_start    if bb_start    is not None else "",
-        bb_end      if bb_end      is not None else "",
+        bb_high     if bb_high     is not None else "",
+        bb_low      if bb_low      is not None else "",
         stress      if stress      else "",
         weight      if weight      else "",
     ]
