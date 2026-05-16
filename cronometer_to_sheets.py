@@ -71,52 +71,70 @@ CRONO_COL_START = 8   # "Calories_In" is index 8
 CRONO_COLS = ALL_HEADERS[CRONO_COL_START:]  # I through O
 
 # ─── Cronometer auth ──────────────────────────────────────────────────────────
-# Cronometer has no public API. We use the same GWT-RPC protocol that the
-# web app uses internally — the same approach as the cronometer-mcp package.
-# Steps: obtain CSRF token → POST credentials → generate auth token → export CSV.
+# Cronometer has no public API. We use their mobile REST API which is more
+# stable than the GWT web protocol. This is the same approach used by the
+# cronometer-mcp package.
 
-CRONO_LOGIN_URL  = "https://cronometer.com/login"
-CRONO_GWT_URL    = "https://cronometer.com/cronometer/app"
+CRONO_MOBILE_API = "https://cronometer.com/api/auth/signin"
 CRONO_EXPORT_URL = "https://cronometer.com/export"
-
-# GWT protocol values — hardcoded per Cronometer's current web deploy.
-# If auth starts failing with GWT errors, update these by inspecting
-# requests to cronometer.com/cronometer/app in browser DevTools.
-GWT_PERMUTATION = "7B121DC5483BF272B1BC1916DA9FA963"
-GWT_HEADER      = "2D6A926E3729946302DC68073CB0D550"
+CRONO_GWT_URL    = "https://cronometer.com/cronometer/app"
+GWT_PERMUTATION  = "7B121DC5483BF272B1BC1916DA9FA963"
+GWT_HEADER       = "2D6A926E3729946302DC68073CB0D550"
 
 
 def get_cronometer_session() -> tuple[requests.Session, int]:
     """
-    Authenticate with Cronometer and return (session, user_id).
-    The session holds cookies for subsequent export requests.
+    Authenticate with Cronometer mobile API and return (session, user_id).
+    Falls back to stoken-based GWT auth if mobile API fails.
     """
-    session = requests.Session()
-    session.headers.update({"User-Agent": "Mozilla/5.0"})
-
-    # Step 1: Get anti-CSRF token from login page
-    resp = session.get(CRONO_LOGIN_URL)
-    resp.raise_for_status()
-    # Parse anticsrf from hidden input: <input name="anticsrf" value="...">
     import re
-    match = re.search(r'name="anticsrf"\s+value="([^"]+)"', resp.text)
-    if not match:
-        raise Exception("Could not find anticsrf token on Cronometer login page")
-    anticsrf = match.group(1)
-    print(f"  [Cronometer] Got anticsrf token")
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36",
+        "Content-Type": "application/json",
+    })
 
-    # Step 2: POST credentials
-    resp = session.post(CRONO_LOGIN_URL, data={
-        "username":  os.environ["CRONOMETER_EMAIL"],
-        "password":  os.environ["CRONOMETER_PASSWORD"],
-        "anticsrf":  anticsrf,
+    # Step 1: POST credentials to mobile API
+    resp = session.post(CRONO_MOBILE_API, json={
+        "username": os.environ["CRONOMETER_EMAIL"],
+        "password": os.environ["CRONOMETER_PASSWORD"],
+    })
+
+    if resp.status_code == 200:
+        data = resp.json()
+        user_id = data.get("userId") or data.get("id") or data.get("user", {}).get("id")
+        stoken  = data.get("stoken") or data.get("token")
+        if user_id:
+            print(f"  [Cronometer] Mobile API auth successful. User ID: {user_id}")
+            # Set stoken cookie for export requests
+            if stoken:
+                session.cookies.set("stoken", stoken, domain="cronometer.com")
+            return session, int(user_id)
+
+    # Fallback: stoken-based login via form POST
+    print(f"  [Cronometer] Mobile API returned {resp.status_code}, trying stoken login...")
+    session.headers.update({"Content-Type": "application/x-www-form-urlencoded"})
+    resp = session.post("https://cronometer.com/login", data={
+        "username": os.environ["CRONOMETER_EMAIL"],
+        "password": os.environ["CRONOMETER_PASSWORD"],
     }, allow_redirects=True)
-    resp.raise_for_status()
-    if "login" in resp.url.lower() and "error" in resp.text.lower():
-        raise Exception("Cronometer login failed — check credentials")
-    print(f"  [Cronometer] Logged in successfully")
 
-    # Step 3: GWT authenticate call to get user ID
+    # Extract stoken from cookies or response
+    stoken = session.cookies.get("stoken")
+    if not stoken:
+        # Try parsing from response
+        match = re.search(r'"stoken"\s*:\s*"([^"]+)"', resp.text)
+        if match:
+            stoken = match.group(1)
+            session.cookies.set("stoken", stoken, domain="cronometer.com")
+
+    if not stoken:
+        raise Exception(
+            "Cronometer auth failed — could not obtain stoken. "
+            "Check CRONOMETER_EMAIL and CRONOMETER_PASSWORD secrets."
+        )
+
+    # Get user ID via GWT authenticate call
     gwt_payload = (
         f"7|0|6|https://cronometer.com/cronometer/|{GWT_HEADER}|"
         f"com.cronometer.shared.rpc.CronometerService|authenticate|"
@@ -127,19 +145,17 @@ def get_cronometer_session() -> tuple[requests.Session, int]:
         "X-GWT-Permutation": GWT_PERMUTATION,
         "X-GWT-Module-Base": "https://cronometer.com/cronometer/",
     })
-    resp.raise_for_status()
-    # Response format: //OK[<token>,<user_id>,...]
     user_id_match = re.search(r'//OK\["[^"]+",(\d+)', resp.text)
     if not user_id_match:
-        raise Exception(f"Could not parse user ID from GWT authenticate response: {resp.text[:200]}")
+        raise Exception(f"Could not parse user ID: {resp.text[:300]}")
     user_id = int(user_id_match.group(1))
-    print(f"  [Cronometer] User ID: {user_id}")
-
+    print(f"  [Cronometer] stoken auth successful. User ID: {user_id}")
     return session, user_id
 
 
 def generate_auth_token(session: requests.Session, user_id: int) -> str:
     """Generate a short-lived export token via GWT RPC."""
+    import re
     gwt_payload = (
         f"7|0|7|https://cronometer.com/cronometer/|{GWT_HEADER}|"
         f"com.cronometer.shared.rpc.CronometerService|generateAuthorizationToken|"
@@ -152,13 +168,11 @@ def generate_auth_token(session: requests.Session, user_id: int) -> str:
         "X-GWT-Module-Base": "https://cronometer.com/cronometer/",
     })
     resp.raise_for_status()
-    import re
     token_match = re.search(r'//OK\["([^"]+)"', resp.text)
     if not token_match:
         raise Exception(f"Could not parse auth token: {resp.text[:200]}")
-    token = token_match.group(1)
     print(f"  [Cronometer] Got export auth token")
-    return token
+    return token_match.group(1)
 
 
 def fetch_daily_nutrition_csv(
