@@ -28,6 +28,7 @@ jobs:
       - name: Run Cronometer → Sheets sync
         env:
           CRONOMETER_EMAIL:       ${{ secrets.CRONOMETER_EMAIL }}
+          CRONOMETER_USERNAME:    ${{ secrets.CRONOMETER_EMAIL }}
           CRONOMETER_PASSWORD:    ${{ secrets.CRONOMETER_PASSWORD }}
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           SPREADSHEET_ID:         ${{ secrets.SPREADSHEET_ID }}
