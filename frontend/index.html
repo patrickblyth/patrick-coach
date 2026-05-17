@@ -116,6 +116,25 @@
     .model-toggle button:hover:not(.active) {
       color: rgba(255,255,255,0.75);
     }
+    .model-toggle button#btn-sonnet.active {
+      background: rgba(245, 158, 11, 0.35);
+      color: #FDE68A;
+    }
+
+    /* Sonnet mode — amber action buttons */
+    body.sonnet-mode .briefing-btn {
+      background: linear-gradient(135deg, #D97706 0%, #B45309 100%);
+      box-shadow: 0 4px 20px rgba(217, 119, 6, 0.4);
+    }
+    body.sonnet-mode .briefing-btn:hover {
+      box-shadow: 0 6px 24px rgba(217, 119, 6, 0.5);
+    }
+    body.sonnet-mode .send-btn {
+      background: #D97706;
+    }
+    body.sonnet-mode .send-btn:hover {
+      background: #B45309;
+    }
 
     /* Main content */
     main {
@@ -376,6 +395,7 @@
     selectedModel = name === 'sonnet' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
     document.getElementById('btn-haiku').classList.toggle('active', name === 'haiku');
     document.getElementById('btn-sonnet').classList.toggle('active', name === 'sonnet');
+    document.body.classList.toggle('sonnet-mode', name === 'sonnet');
   }
 
   function setLoading(loading) {
