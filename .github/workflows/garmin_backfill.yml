@@ -1,0 +1,39 @@
+name: Garmin Historical Backfill
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backfill:
+    name: Garmin full history → Google Sheets
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours — ~1,900 days × 5 API calls × 1.2s = ~3.2hrs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Garmin historical backfill
+        env:
+          GARMIN_EMAIL:           ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD:        ${{ secrets.GARMIN_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          SPREADSHEET_ID:         ${{ secrets.SPREADSHEET_ID }}
+        run: python garmin_backfill.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: garmin-backfill-failure-logs
+          path: "*.log"
+          retention-days: 7

@@ -1,0 +1,49 @@
+# .github/workflows/daily_sync.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Patrick's AI Performance Coach — Daily Data Sync
+# Runs at 02:00 AEST (16:00 UTC) every day.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Daily Performance Sync
+
+on:
+  schedule:
+    # 16:00 UTC = 02:00 AEST (UTC+10). Adjust to 15:00 UTC in AEDT (UTC+11).
+    - cron: "0 16 * * *"
+  workflow_dispatch:   # Allow manual trigger from GitHub UI for testing
+
+jobs:
+  sync:
+    name: Strava → Google Sheets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Strava → Sheets sync
+        env:
+          STRAVA_CLIENT_ID:       ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET:   ${{ secrets.STRAVA_CLIENT_SECRET }}
+          STRAVA_REFRESH_TOKEN:   ${{ secrets.STRAVA_REFRESH_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          SPREADSHEET_ID:         ${{ secrets.SPREADSHEET_ID }}
+        run: python strava_to_sheets.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-failure-logs
+          path: "*.log"
+          retention-days: 7

@@ -1,0 +1,43 @@
+name: Cronometer Daily Sync
+
+on:
+  schedule:
+    # 03:00 AEST daily (17:00 UTC) — 30 min after Garmin sync
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    name: Cronometer → Google Sheets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Cronometer → Sheets sync
+        env:
+          CRONOMETER_EMAIL:       ${{ secrets.CRONOMETER_EMAIL }}
+          CRONOMETER_USERNAME:    ${{ secrets.CRONOMETER_EMAIL }}
+          CRONOMETER_PASSWORD:    ${{ secrets.CRONOMETER_PASSWORD }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          SPREADSHEET_ID:         ${{ secrets.SPREADSHEET_ID }}
+        run: python cronometer_to_sheets.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cronometer-sync-failure-logs
+          path: "*.log"
+          retention-days: 7

@@ -1,0 +1,38 @@
+# .github/workflows/backfill.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Patrick's AI Performance Coach — Historical Backfill
+# Manual trigger ONLY — never runs automatically.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Historical Backfill
+
+on:
+  workflow_dispatch:   # Manual trigger only — no cron
+
+jobs:
+  backfill:
+    name: Strava full history → Google Sheets
+    runs-on: ubuntu-latest
+    timeout-minutes: 120    # Allow up to 2 hours for large histories
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run historical backfill
+        env:
+          STRAVA_CLIENT_ID:       ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET:   ${{ secrets.STRAVA_CLIENT_SECRET }}
+          STRAVA_REFRESH_TOKEN:   ${{ secrets.STRAVA_REFRESH_TOKEN }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          SPREADSHEET_ID:         ${{ secrets.SPREADSHEET_ID }}
+        run: python strava_backfill.py
