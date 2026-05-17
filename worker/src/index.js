@@ -327,19 +327,21 @@ async function fetchSheetTab(accessToken, spreadsheetId, tab) {
 }
 
 function formatSheetData({ workouts, dailyStats, raceCalendar }) {
-  const tabToText = (name, rows) => {
+  const tabToText = (name, rows, maxRows) => {
     if (!rows.length) return `## ${name}\n(empty)`;
     const headers = rows[0];
-    const body = rows.slice(1).map(row =>
+    const dataRows = rows.slice(1);
+    const recent = maxRows ? dataRows.slice(-maxRows) : dataRows;
+    const body = recent.map(row =>
       headers.map((h, i) => `${h}: ${row[i] ?? ''}`).join(' | ')
     ).join('\n');
     return `## ${name}\n${body}`;
   };
 
   return [
-    tabToText('Workouts', workouts),
-    tabToText('Daily Stats', dailyStats),
-    tabToText('Race Calendar', raceCalendar),
+    tabToText('Workouts', workouts, 30),       // last 30 activities (~4 weeks)
+    tabToText('Daily Stats', dailyStats, 14),  // last 14 days
+    tabToText('Race Calendar', raceCalendar),  // all (small)
   ].join('\n\n');
 }
 
