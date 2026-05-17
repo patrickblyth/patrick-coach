@@ -1,0 +1,13 @@
+name = "patrick-ai-coach"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+[vars]
+# Switch to "claude-sonnet-4-6" for higher quality responses
+CLAUDE_MODEL = "claude-haiku-4-5-20251001"
+
+# Secrets — never put real values here. Set them with:
+#   wrangler secret put ANTHROPIC_API_KEY
+#   wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
+#   wrangler secret put GOOGLE_PRIVATE_KEY
+#   wrangler secret put GOOGLE_SHEETS_ID
