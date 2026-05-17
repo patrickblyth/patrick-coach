@@ -87,6 +87,36 @@
       font-weight: 400;
     }
 
+    /* Model toggle */
+    .model-toggle {
+      display: inline-flex;
+      margin-top: 16px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 999px;
+      padding: 3px;
+      gap: 2px;
+    }
+    .model-toggle button {
+      border: none;
+      background: transparent;
+      color: rgba(255,255,255,0.5);
+      font-family: inherit;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 5px 14px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .model-toggle button.active {
+      background: rgba(255,255,255,0.15);
+      color: white;
+    }
+    .model-toggle button:hover:not(.active) {
+      color: rgba(255,255,255,0.75);
+    }
+
     /* Main content */
     main {
       flex: 1;
@@ -297,6 +327,10 @@
   <div class="header-eyebrow">AI Coaching</div>
   <h1>Patrick <span>Coach</span></h1>
   <p class="header-sub">Live training data &middot; Melbourne</p>
+  <div class="model-toggle">
+    <button id="btn-haiku" class="active" onclick="setModel('haiku')">Haiku</button>
+    <button id="btn-sonnet" onclick="setModel('sonnet')">Sonnet</button>
+  </div>
 </header>
 
 <main>
@@ -336,6 +370,14 @@
 <script>
   const WORKER_URL = 'https://patrick-ai-coach.patrick-coach.workers.dev';
 
+  let selectedModel = 'claude-haiku-4-5-20251001';
+
+  function setModel(name) {
+    selectedModel = name === 'sonnet' ? 'claude-sonnet-4-6' : 'claude-haiku-4-5-20251001';
+    document.getElementById('btn-haiku').classList.toggle('active', name === 'haiku');
+    document.getElementById('btn-sonnet').classList.toggle('active', name === 'sonnet');
+  }
+
   function setLoading(loading) {
     document.getElementById('briefing-btn').disabled = loading;
     document.getElementById('send-btn').disabled = loading;
@@ -364,7 +406,7 @@
       const res = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'briefing', message: '' }),
+        body: JSON.stringify({ type: 'briefing', message: '', model: selectedModel }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
@@ -390,7 +432,7 @@
       const res = await fetch(WORKER_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'question', message }),
+        body: JSON.stringify({ type: 'question', message, model: selectedModel }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'Request failed');

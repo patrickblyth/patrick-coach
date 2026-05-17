@@ -212,7 +212,7 @@ export default {
     }
 
     try {
-      const { message, type } = await request.json();
+      const { message, type, model } = await request.json();
 
       if (!message && type !== 'briefing') {
         return jsonError('No message provided', 400);
@@ -231,7 +231,7 @@ export default {
         ? 'Please give me my morning briefing for today.'
         : message;
 
-      const aiResponse = await callClaude(env, sheetContext, userMessage);
+      const aiResponse = await callClaude(env, sheetContext, userMessage, model);
 
       return new Response(JSON.stringify({ response: aiResponse }), {
         headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' },
@@ -347,8 +347,11 @@ function formatSheetData({ workouts, dailyStats, raceCalendar }) {
 
 // ---- Claude API ----
 
-async function callClaude(env, sheetContext, userMessage) {
-  const model = env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001';
+async function callClaude(env, sheetContext, userMessage, requestedModel) {
+  const ALLOWED_MODELS = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6'];
+  const model = ALLOWED_MODELS.includes(requestedModel)
+    ? requestedModel
+    : (env.CLAUDE_MODEL || 'claude-haiku-4-5-20251001');
 
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
