@@ -111,7 +111,7 @@ def get_strava_access_token() -> str:
 def get_gspread_client() -> gspread.Client:
     sa_info     = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT"])
     creds       = Credentials.from_service_account_info(sa_info, scopes=GSHEETS_SCOPES)
-    http_client = gspread.BackoffClient(auth=creds)
+    http_client = gspread.BackOffHTTPClient(auth=creds)
     return gspread.Client(auth=creds, http_client=http_client)
 
 
