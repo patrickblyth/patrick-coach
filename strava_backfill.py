@@ -266,25 +266,38 @@ def flush_batch(ws: gspread.Worksheet, batch: list[list]) -> int:
 
 # ─── Smart pagination ─────────────────────────────────────────────────────────
 
-def fetch_unsynced_activities(access_token: str, after_date: str | None) -> list[dict]:
+def fetch_activities_in_range(
+    access_token: str,
+    after_date: str | None,
+    before_date: str | None = None,
+) -> list[dict]:
     """
-    Fetch only activities not yet in the sheet using Strava's `after` parameter.
+    Fetch activities between after_date and before_date (both optional).
 
-    If after_date is None (empty sheet), fetches everything.
-    If after_date is set, fetches only activities after that date — dramatically
-    reducing the number of list-pagination API requests on subsequent runs.
-
+    Maps directly to Strava's `after` / `before` epoch params.
+    If both are None, fetches full history.
     Returns activities oldest-first for chronological sheet ordering.
     """
     all_activities = []
     page           = 1
 
-    # Convert date string to epoch for Strava's `after` param
     after_epoch = None
     if after_date:
         dt          = datetime.datetime.strptime(after_date, "%Y-%m-%d")
         after_epoch = int(dt.timestamp())
+
+    before_epoch = None
+    if before_date:
+        dt           = datetime.datetime.strptime(before_date, "%Y-%m-%d")
+        dt           = dt.replace(hour=23, minute=59, second=59)
+        before_epoch = int(dt.timestamp())
+
+    if after_date and before_date:
+        print(f"[Strava] Fetching activities from {after_date} to {before_date}...")
+    elif after_date:
         print(f"[Strava] Fetching activities after {after_date} (epoch {after_epoch})...")
+    elif before_date:
+        print(f"[Strava] Fetching activities before {before_date}...")
     else:
         print("[Strava] No existing data — fetching full activity history...")
 
@@ -292,6 +305,8 @@ def fetch_unsynced_activities(access_token: str, after_date: str | None) -> list
         params = {"per_page": 200, "page": page}
         if after_epoch:
             params["after"] = after_epoch
+        if before_epoch:
+            params["before"] = before_epoch
 
         batch = strava_get("/athlete/activities", access_token, params=params)
 
@@ -308,7 +323,7 @@ def fetch_unsynced_activities(access_token: str, after_date: str | None) -> list
 
     # Reverse so we process oldest → newest
     all_activities.reverse()
-    print(f"[Strava] {len(all_activities)} unsynced activities to process.\n")
+    print(f"[Strava] {len(all_activities)} activities to process.\n")
     return all_activities
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -327,11 +342,25 @@ def main():
     existing_ids, latest_date = get_existing_ids_and_latest_date(ws)
     print(f"[Sheets] {len(existing_ids)} activities already in sheet.")
     if latest_date:
-        print(f"[Sheets] Most recent activity date: {latest_date} — using for smart pagination.")
+        print(f"[Sheets] Most recent activity date: {latest_date}")
     print()
 
-    # Fetch only activities not yet in sheet
-    activities = fetch_unsynced_activities(access_token, latest_date)
+    # Explicit date range from workflow_dispatch inputs overrides the default
+    # incremental-sync behaviour — useful for backfilling gaps in the sheet.
+    start_date_override = os.environ.get("START_DATE", "").strip() or None
+    end_date_override   = os.environ.get("END_DATE",   "").strip() or None
+
+    if start_date_override:
+        fetch_after  = start_date_override
+        fetch_before = end_date_override
+        print(f"[Mode] Date-range backfill: {fetch_after} → {fetch_before or 'now'}")
+    else:
+        fetch_after  = latest_date
+        fetch_before = None
+        print(f"[Mode] Incremental sync from most recent sheet date")
+    print()
+
+    activities = fetch_activities_in_range(access_token, fetch_after, fetch_before)
 
     if not activities:
         print("[Info] No new activities to process. Backfill is complete!")
