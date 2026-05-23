@@ -7,7 +7,16 @@
 name: Historical Backfill
 
 on:
-  workflow_dispatch:   # Manual trigger only — no cron
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date for backfill (YYYY-MM-DD). Leave blank for incremental sync.'
+        required: false
+        default: ''
+      end_date:
+        description: 'End date for backfill (YYYY-MM-DD). Leave blank to fetch up to today.'
+        required: false
+        default: ''
 
 jobs:
   backfill:
@@ -35,4 +44,6 @@ jobs:
           STRAVA_REFRESH_TOKEN:   ${{ secrets.STRAVA_REFRESH_TOKEN }}
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           SPREADSHEET_ID:         ${{ secrets.SPREADSHEET_ID }}
+          START_DATE:             ${{ github.event.inputs.start_date }}
+          END_DATE:               ${{ github.event.inputs.end_date }}
         run: python strava_backfill.py
